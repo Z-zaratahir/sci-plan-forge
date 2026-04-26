@@ -1,98 +1,300 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-export type ThreadId = "literature" | "protocol" | "materials" | "budget" | "timeline" | "validation" | "recombiner";
-export type ThreadStatus = "pending" | "running" | "done";
+/*
+ * PDC FORK-JOIN PARALLEL THREAD MODEL
+ * =====================================
+ * Fork point: Threads 0,1,3,4,5 start simultaneously via Promise.all()
+ * Sequential dependency: Thread 2 (Materials) waits for Thread 1 (Protocol)
+ *   — this is an intentional data dependency, not a performance choice
+ * Join barrier: Thread 6 (Recombiner) waits for ALL 6 threads to complete
+ *   — synchronization point where cross-thread conflicts are detected
+ * Critical path: computed in TimelineCard using Kahn's topological sort
+ *   on the task dependency DAG returned by /api/timeline
+ */
 
-export interface ThreadState {
-  id: ThreadId;
-  status: ThreadStatus;
+export interface Thread {
+  id: number;
+  name: string;
+  status: "pending" | "running" | "done" | "error";
+  color: string;
 }
 
-const INITIAL: ThreadState[] = [
-  { id: "literature", status: "pending" },
-  { id: "protocol", status: "pending" },
-  { id: "materials", status: "pending" },
-  { id: "budget", status: "pending" },
-  { id: "timeline", status: "pending" },
-  { id: "validation", status: "pending" },
-  { id: "recombiner", status: "pending" },
+export interface PlanData {
+  parsed: any;
+  literature: any;
+  protocol: any[];
+  materials: any[];
+  budget: any;
+  timeline: any;
+  validation: any;
+  conflicts: any[];
+  trustLevel: string | null;
+}
+
+const INITIAL_THREADS: Thread[] = [
+  { id: 0, name: "Literature QC", status: "pending", color: "#7C3AED" },
+  { id: 1, name: "Protocol", status: "pending", color: "#2563EB" },
+  { id: 2, name: "Materials", status: "pending", color: "#D97706" },
+  { id: 3, name: "Budget", status: "pending", color: "#16A34A" },
+  { id: 4, name: "Timeline", status: "pending", color: "#DC2626" },
+  { id: 5, name: "Validation", status: "pending", color: "#0891B2" },
+  { id: 6, name: "Recombiner", status: "pending", color: "#0D0D0D" },
 ];
 
+const EMPTY_PLAN: PlanData = {
+  parsed: null,
+  literature: null,
+  protocol: [],
+  materials: [],
+  budget: null,
+  timeline: null,
+  validation: null,
+  conflicts: [],
+  trustLevel: null,
+};
+
 export function useThreadSimulator() {
-  const [threads, setThreads] = useState<ThreadState[]>(INITIAL);
-  const [parsedReady, setParsedReady] = useState(false);
+  const [threads, setThreads] = useState<Thread[]>(INITIAL_THREADS);
+  const [planData, setPlanData] = useState<PlanData>(EMPTY_PLAN);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
-  const [running, setRunning] = useState(false);
-  const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [allComplete, setAllComplete] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const set = (id: ThreadId, status: ThreadStatus) =>
+  const setThreadStatus = useCallback((id: number, status: Thread["status"]) => {
     setThreads((prev) => prev.map((t) => (t.id === id ? { ...t, status } : t)));
-
-  const clearAll = () => {
-    timersRef.current.forEach(clearTimeout);
-    timersRef.current = [];
-    if (intervalRef.current) clearInterval(intervalRef.current);
-    intervalRef.current = null;
-  };
-
-  const startGeneration = useCallback(() => {
-    clearAll();
-    setThreads(INITIAL);
-    setParsedReady(false);
-    setElapsedSeconds(0);
-    setRunning(true);
-
-    const start = Date.now();
-    intervalRef.current = setInterval(() => {
-      setElapsedSeconds(Math.floor((Date.now() - start) / 1000));
-    }, 250);
-
-    const t = (ms: number, fn: () => void) => {
-      timersRef.current.push(setTimeout(fn, ms));
-    };
-
-    t(800, () => {
-      setParsedReady(true);
-      // Start threads 1,2,4,5,6 simultaneously. Thread 3 waits for 2.
-      set("literature", "running");
-      set("protocol", "running");
-      set("budget", "running");
-      set("timeline", "running");
-      set("validation", "running");
-
-      t(4000, () => set("literature", "done"));
-      t(6000, () => {
-        set("protocol", "done");
-        set("materials", "running");
-        t(3000, () => set("materials", "done"));
-      });
-      t(5000, () => set("budget", "done"));
-      t(4500, () => set("timeline", "done"));
-      t(3500, () => set("validation", "done"));
-    });
   }, []);
 
-  // Watch for all 6 done -> start recombiner
-  useEffect(() => {
-    const sixDone = threads.slice(0, 6).every((t) => t.status === "done");
-    const recomb = threads[6];
-    if (sixDone && recomb.status === "pending") {
-      set("recombiner", "running");
-      const id = setTimeout(() => set("recombiner", "done"), 2000);
-      timersRef.current.push(id);
-    }
-    if (recomb.status === "done" && intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
-      setRunning(false);
-    }
-  }, [threads]);
+  const api = useCallback(async (endpoint: string, body: object) => {
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`${endpoint} failed: ${res.status}`);
+    return res.json();
+  }, []);
 
-  useEffect(() => () => clearAll(), []);
+  const startGeneration = useCallback(
+    async (hypothesis: string) => {
+      const clean = (hypothesis || "").trim();
+      if (!clean) return;
 
-  const allComplete = threads.every((t) => t.status === "done");
-  const completeCount = threads.filter((t) => t.status === "done").length;
+      setError(null);
+      setThreads(INITIAL_THREADS);
+      setPlanData(EMPTY_PLAN);
+      setElapsedSeconds(0);
+      setAllComplete(false);
 
-  return { threads, parsedReady, elapsedSeconds, allComplete, completeCount, running, startGeneration };
+      if (timerRef.current) clearInterval(timerRef.current);
+      const interval = setInterval(() => setElapsedSeconds((s) => s + 1), 1000);
+      timerRef.current = interval;
+
+      const corrections = JSON.parse(localStorage.getItem("whitecoat_corrections") || "[]");
+      localStorage.setItem("whitecoat_hypothesis", clean);
+
+      let parsed: any = null;
+      try {
+        parsed = await api("/api/parse", { hypothesis: clean });
+        setPlanData((prev) => ({ ...prev, parsed }));
+      } catch (e) {
+        parsed = null;
+      }
+
+      setThreadStatus(0, "running");
+      setThreadStatus(1, "running");
+      setThreadStatus(3, "running");
+      setThreadStatus(4, "running");
+      setThreadStatus(5, "running");
+
+      const [litResult, protResult, valResult] = await Promise.allSettled([
+        api("/api/literature", { hypothesis: clean })
+          .then((data) => {
+            setThreadStatus(0, "done");
+            setPlanData((prev) => ({ ...prev, literature: data }));
+            return data;
+          })
+          .catch(() => {
+            setThreadStatus(0, "error");
+            return null;
+          }),
+        api("/api/protocol", { hypothesis: clean, parsed, corrections })
+          .then((data) => {
+            setThreadStatus(1, "done");
+            setPlanData((prev) => ({ ...prev, protocol: Array.isArray(data) ? data : [] }));
+            return data;
+          })
+          .catch(() => {
+            setThreadStatus(1, "error");
+            return null;
+          }),
+        api("/api/validation", { hypothesis: clean, parsed, corrections })
+          .then((data) => {
+            setThreadStatus(5, "done");
+            setPlanData((prev) => ({ ...prev, validation: data }));
+            return data;
+          })
+          .catch(() => {
+            setThreadStatus(5, "error");
+            return null;
+          }),
+      ]);
+
+      const literature = litResult.status === "fulfilled" ? litResult.value : null;
+      const protocol = protResult.status === "fulfilled" ? protResult.value : null;
+      const validation = valResult.status === "fulfilled" ? valResult.value : null;
+
+      setThreadStatus(2, "running");
+      const materials = await api("/api/materials", {
+        hypothesis: clean,
+        steps: protocol || [],
+        corrections,
+      })
+        .then((data) => {
+          setThreadStatus(2, "done");
+          setPlanData((prev) => ({ ...prev, materials: Array.isArray(data) ? data : [] }));
+          return data;
+        })
+        .catch(() => {
+          setThreadStatus(2, "error");
+          return null;
+        });
+
+      const [budgetResult, timelineResult] = await Promise.allSettled([
+        api("/api/budget", { materials: materials || [], corrections })
+          .then((data) => {
+            setThreadStatus(3, "done");
+            setPlanData((prev) => ({ ...prev, budget: data }));
+            return data;
+          })
+          .catch(() => {
+            setThreadStatus(3, "error");
+            return null;
+          }),
+        api("/api/timeline", { hypothesis: clean, steps: protocol || [], corrections })
+          .then((data) => {
+            setThreadStatus(4, "done");
+            setPlanData((prev) => ({ ...prev, timeline: data }));
+            return data;
+          })
+          .catch(() => {
+            setThreadStatus(4, "error");
+            return null;
+          }),
+      ]);
+
+      const budget = budgetResult.status === "fulfilled" ? budgetResult.value : null;
+      const timeline = timelineResult.status === "fulfilled" ? timelineResult.value : null;
+
+      setThreadStatus(6, "running");
+      const recombined = await api("/api/recombine", {
+        literature,
+        protocol,
+        materials,
+        budget,
+        timeline,
+        validation,
+      })
+        .then((data) => {
+          setThreadStatus(6, "done");
+          setPlanData((prev) => ({
+            ...prev,
+            conflicts: Array.isArray(data?.conflicts) ? data.conflicts : [],
+            trustLevel: data?.trustLevel || null,
+          }));
+          return data;
+        })
+        .catch((e) => {
+          setThreadStatus(6, "error");
+          setError(e instanceof Error ? e.message : "Failed to recombine");
+          return null;
+        });
+
+      clearInterval(interval);
+      timerRef.current = null;
+      setAllComplete(true);
+
+      localStorage.setItem(
+        "whitecoat_last_plan",
+        JSON.stringify({
+          hypothesis: clean,
+          parsed,
+          literature,
+          protocol,
+          materials,
+          budget,
+          timeline,
+          validation,
+          conflicts: recombined?.conflicts || [],
+        }),
+      );
+    },
+    [api, setThreadStatus],
+  );
+
+  const retryThread = useCallback(
+    async (threadId: number, hypothesis: string) => {
+      const clean = (hypothesis || "").trim();
+      if (!clean) return;
+      const corrections = JSON.parse(localStorage.getItem("whitecoat_corrections") || "[]");
+      const protocol = Array.isArray(planData.protocol) ? planData.protocol : [];
+      const materials = Array.isArray(planData.materials) ? planData.materials : [];
+
+      setThreadStatus(threadId, "running");
+      try {
+        if (threadId === 0) {
+          const data = await api("/api/literature", { hypothesis: clean });
+          setPlanData((prev) => ({ ...prev, literature: data }));
+        }
+        if (threadId === 1) {
+          const data = await api("/api/protocol", { hypothesis: clean, parsed: planData.parsed, corrections });
+          setPlanData((prev) => ({ ...prev, protocol: Array.isArray(data) ? data : [] }));
+        }
+        if (threadId === 2) {
+          const data = await api("/api/materials", { hypothesis: clean, steps: protocol, corrections });
+          setPlanData((prev) => ({ ...prev, materials: Array.isArray(data) ? data : [] }));
+        }
+        if (threadId === 3) {
+          const data = await api("/api/budget", { materials, corrections });
+          setPlanData((prev) => ({ ...prev, budget: data }));
+        }
+        if (threadId === 4) {
+          const data = await api("/api/timeline", { hypothesis: clean, steps: protocol, corrections });
+          setPlanData((prev) => ({ ...prev, timeline: data }));
+        }
+        if (threadId === 5) {
+          const data = await api("/api/validation", { hypothesis: clean, parsed: planData.parsed, corrections });
+          setPlanData((prev) => ({ ...prev, validation: data }));
+        }
+        if (threadId === 6) {
+          const data = await api("/api/recombine", {
+            literature: planData.literature,
+            protocol,
+            materials,
+            budget: planData.budget,
+            timeline: planData.timeline,
+            validation: planData.validation,
+          });
+          setPlanData((prev) => ({
+            ...prev,
+            conflicts: Array.isArray(data?.conflicts) ? data.conflicts : [],
+            trustLevel: data?.trustLevel || null,
+          }));
+        }
+        setThreadStatus(threadId, "done");
+      } catch (e) {
+        setThreadStatus(threadId, "error");
+      }
+    },
+    [api, planData, setThreadStatus],
+  );
+
+  useEffect(
+    () => () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    },
+    [],
+  );
+
+  return { threads, planData, startGeneration, retryThread, elapsedSeconds, allComplete, error };
 }

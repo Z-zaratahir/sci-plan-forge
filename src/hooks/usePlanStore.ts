@@ -8,7 +8,7 @@ const CORRECTIONS_KEY = "whitecoat_corrections";
 export interface Correction {
   id: string;
   experiment_type: string;
-  section: string;
+  section: "protocol" | "materials" | "budget" | "timeline" | "validation" | "literature";
   original_text: string;
   correction: string;
   timestamp: string;

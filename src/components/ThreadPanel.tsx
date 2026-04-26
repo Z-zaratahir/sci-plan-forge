@@ -1,26 +1,27 @@
-import { BookOpen, ListChecks, Package, DollarSign, CalendarDays, CheckCircle, GitMerge, Loader2, Check, AlertTriangle } from "lucide-react";
-import type { ThreadId, ThreadState } from "../hooks/useThreadSimulator";
+import { BookOpen, ListChecks, Package, DollarSign, CalendarDays, CheckCircle, GitMerge, Loader2, Check, AlertTriangle, CircleX } from "lucide-react";
+import type { Thread } from "../hooks/useThreadSimulator";
 import { TrustBadge, type TrustLevel } from "./TrustBadge";
 
-const META: Record<ThreadId, { label: string; color: string; Icon: typeof BookOpen }> = {
-  literature: { label: "Literature QC", color: "#7C3AED", Icon: BookOpen },
-  protocol: { label: "Protocol", color: "#2563EB", Icon: ListChecks },
-  materials: { label: "Materials", color: "#D97706", Icon: Package },
-  budget: { label: "Budget", color: "#16A34A", Icon: DollarSign },
-  timeline: { label: "Timeline", color: "#DC2626", Icon: CalendarDays },
-  validation: { label: "Validation", color: "#0891B2", Icon: CheckCircle },
-  recombiner: { label: "Recombiner", color: "#0D0D0D", Icon: GitMerge },
+const META: Record<number, { label: string; color: string; Icon: typeof BookOpen }> = {
+  0: { label: "Literature QC", color: "#7C3AED", Icon: BookOpen },
+  1: { label: "Protocol", color: "#2563EB", Icon: ListChecks },
+  2: { label: "Materials", color: "#D97706", Icon: Package },
+  3: { label: "Budget", color: "#16A34A", Icon: DollarSign },
+  4: { label: "Timeline", color: "#DC2626", Icon: CalendarDays },
+  5: { label: "Validation", color: "#0891B2", Icon: CheckCircle },
+  6: { label: "Recombiner", color: "#0D0D0D", Icon: GitMerge },
 };
 
 export interface ThreadPanelProps {
-  threads: ThreadState[];
+  threads: Thread[];
   elapsedSeconds: number;
-  completeCount: number;
   trust: TrustLevel;
-  warnings: string[];
+  warnings: { resolved?: boolean; text?: string }[];
+  allComplete: boolean;
 }
 
-export function ThreadPanel({ threads, elapsedSeconds, completeCount, trust, warnings }: ThreadPanelProps) {
+export function ThreadPanel({ threads, elapsedSeconds, trust, warnings, allComplete }: ThreadPanelProps) {
+  const completeCount = threads.filter((t) => t.status === "done").length;
   return (
     <aside
       className="bg-[#FFFFFF] border border-[#E5E5E3] rounded-[10px] p-5 sticky"
@@ -34,9 +35,10 @@ export function ThreadPanel({ threads, elapsedSeconds, completeCount, trust, war
       </div>
       <ul className="flex flex-col">
         {threads.map((t) => {
-          const m = META[t.id];
+          const m = META[t.id] || META[0];
           const isDone = t.status === "done";
           const isPending = t.status === "pending";
+          const isError = t.status === "error";
           const labelColor = isDone ? "#0D0D0D" : isPending ? "#9B9B98" : "#0D0D0D";
           const iconColor = t.status === "running" ? m.color : isDone ? m.color : "#9B9B98";
           return (
@@ -52,6 +54,7 @@ export function ThreadPanel({ threads, elapsedSeconds, completeCount, trust, war
                 <Loader2 size={14} className="animate-spin text-[#0D0D0D]" />
               )}
               {t.status === "done" && <Check size={14} className="text-[#16A34A]" />}
+              {isError && <CircleX size={14} className="text-[#DC2626]" />}
             </li>
           );
         })}
@@ -84,7 +87,7 @@ export function ThreadPanel({ threads, elapsedSeconds, completeCount, trust, war
       >
         Trust score
       </div>
-      <TrustBadge level={trust} />
+      <TrustBadge level={allComplete ? trust : null} />
 
       {warnings.length > 0 && (
         <ul className="flex flex-col gap-2 mt-3">
@@ -92,7 +95,7 @@ export function ThreadPanel({ threads, elapsedSeconds, completeCount, trust, war
             <li key={i} className="flex items-start gap-2">
               <AlertTriangle size={13} className="mt-[2px] text-[#D97706] shrink-0" />
               <span className="text-[#6B6B68]" style={{ fontSize: 12, lineHeight: 1.5 }}>
-                {w}
+                {w.text || "Conflict detected"}
               </span>
             </li>
           ))}

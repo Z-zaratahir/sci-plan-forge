@@ -4,7 +4,7 @@ import { ChevronDown, ChevronUp, ThumbsUp, ThumbsDown, Flag, Trash2 } from "luci
 import { Navbar } from "../components/Navbar";
 import { Badge } from "../components/Badge";
 import { useCorrections, planStore } from "../hooks/usePlanStore";
-import type { PlanData } from "../data/mockPlanData";
+type SectionKey = "protocol" | "materials" | "budget" | "timeline" | "validation" | "literature";
 
 export const Route = createFileRoute("/review")({
   head: () => ({
@@ -21,15 +21,15 @@ export const Route = createFileRoute("/review")({
 type Rating = "up" | "down" | "flag" | null;
 
 interface SectionMeta {
-  key: keyof PlanData;
+  key: SectionKey;
   label: string;
   color: string;
-  preview: (p: PlanData) => string;
+  preview: (p: any) => string;
 }
 
 const SECTIONS: SectionMeta[] = [
-  { key: "literature", label: "Literature review", color: "#7C3AED", preview: (p) => `${p.literature.references.length} references — novelty: ${p.literature.novelty}` },
-  { key: "steps", label: "Step-by-step protocol", color: "#2563EB", preview: (p) => `${p.steps.length} steps` },
+  { key: "literature", label: "Literature review", color: "#7C3AED", preview: (p) => `${p?.literature?.references?.length || 0} references — novelty: ${p?.literature?.novelty || "unknown"}` },
+  { key: "protocol", label: "Step-by-step protocol", color: "#2563EB", preview: (p) => `${p?.protocol?.length || p?.steps?.length || 0} steps` },
   { key: "materials", label: "Materials & reagents", color: "#D97706", preview: (p) => `${p.materials.length} items` },
   { key: "budget", label: "Budget estimate", color: "#16A34A", preview: (p) => `Total $${p.budget.total.toLocaleString("en-US")}` },
   { key: "timeline", label: "Experiment timeline", color: "#DC2626", preview: (p) => `${p.timeline.minWeeks} weeks · ${p.timeline.criticalCount} critical tasks` },
@@ -37,7 +37,7 @@ const SECTIONS: SectionMeta[] = [
 ];
 
 function ReviewPage() {
-  const [plan, setPlan] = useState<PlanData | null>(null);
+  const [plan, setPlan] = useState<any | null>(null);
   const { corrections, add, remove } = useCorrections();
 
   useEffect(() => {
@@ -55,6 +55,9 @@ function ReviewPage() {
           <p className="text-[#6B6B68] mt-2 mb-8" style={{ fontSize: 14, lineHeight: 1.6 }}>
             Annotate sections of your plan. Corrections are stored and used to improve future plans of the same experiment type.
           </p>
+          <div className="text-[#6B6B68] mb-5" style={{ fontSize: 13 }}>
+            {corrections.length} corrections stored
+          </div>
 
           {!plan ? (
             <div
@@ -84,8 +87,8 @@ function ReviewPage() {
                   plan={plan}
                   onSave={(text) =>
                     add({
-                      experiment_type: plan.parsed.intervention.slice(0, 60),
-                      section: s.label,
+                      experiment_type: (hypothesisToExperimentType(plan?.hypothesis || localStorage.getItem("whitecoat_hypothesis") || "")),
+                      section: s.key,
                       original_text: s.preview(plan),
                       correction: text,
                     })
@@ -155,7 +158,7 @@ function ReviewSection({
   onSave,
 }: {
   meta: SectionMeta;
-  plan: PlanData;
+  plan: any;
   onSave: (text: string) => void;
 }) {
   const [open, setOpen] = useState(true);
@@ -261,4 +264,12 @@ function ReviewSection({
       </div>
     </section>
   );
+}
+
+function hypothesisToExperimentType(hypothesis: string): string {
+  return String(hypothesis || "")
+    .trim()
+    .split(/\s+/)
+    .slice(0, 3)
+    .join(" ");
 }

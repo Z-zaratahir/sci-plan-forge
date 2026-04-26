@@ -11,10 +11,10 @@ import { BudgetCard } from "../components/BudgetCard";
 import { TimelineCard } from "../components/TimelineCard";
 import { ValidationCard } from "../components/ValidationCard";
 import { RecombinerCard } from "../components/RecombinerCard";
-import { useThreadSimulator, type ThreadId } from "../hooks/useThreadSimulator";
-import { planStore } from "../hooks/usePlanStore";
-import { buildMockPlan, MOCK_HYPOTHESIS, MOCK_CONFLICTS, MOCK_LITERATURE, MOCK_STEPS, MOCK_MATERIALS, MOCK_BUDGET, MOCK_TIMELINE, MOCK_VALIDATION, MOCK_PARSED } from "../data/mockPlanData";
+import { useThreadSimulator } from "../hooks/useThreadSimulator";
+import type { BudgetData, Conflict, LiteratureData, Material, ParsedStructure, ProtocolStep, TimelineData, ValidationData } from "../data/mockPlanData";
 import type { TrustLevel } from "../components/TrustBadge";
+import { SkeletonBlock } from "../components/SkeletonBar";
 
 export const Route = createFileRoute("/plan")({
   head: () => ({
@@ -33,38 +33,56 @@ function PlanPage() {
   const [hypothesis, setHypothesis] = useState<string>("");
   const sim = useThreadSimulator();
 
-  // Read hypothesis on mount, then start
   useEffect(() => {
-    const stored = planStore.getHypothesis();
-    const value = stored && stored.length > 0 ? stored : MOCK_HYPOTHESIS;
+    const stored = localStorage.getItem("whitecoat_hypothesis");
+    const value = stored && stored.length > 0 ? stored : "";
     setHypothesis(value);
-    sim.startGeneration();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (value) {
+      sim.startGeneration(value);
+    }
   }, []);
 
-  // Persist plan when complete
-  useEffect(() => {
-    if (sim.allComplete && hypothesis) {
-      planStore.setPlan(buildMockPlan(hypothesis));
-    }
-  }, [sim.allComplete, hypothesis]);
+  const statusOf = (id: number) => sim.threads.find((t) => t.id === id)?.status ?? "pending";
 
-  const statusOf = (id: ThreadId) => sim.threads.find((t) => t.id === id)!.status;
+  const parsedData = (sim.planData.parsed ?? null) as ParsedStructure | null;
+  const protocolData = (Array.isArray(sim.planData.protocol) ? sim.planData.protocol : []) as ProtocolStep[];
+  const materialsData = (Array.isArray(sim.planData.materials) ? sim.planData.materials : []) as Material[];
+  const budgetData = (sim.planData.budget ?? null) as BudgetData | null;
+  const timelineData = (sim.planData.timeline ?? null) as TimelineData | null;
+  const validationData = (sim.planData.validation ?? null) as ValidationData | null;
+  const conflictsData = (Array.isArray(sim.planData.conflicts) ? sim.planData.conflicts : []) as Conflict[];
+
+  const literatureData = useMemo(() => {
+    const raw = (sim.planData.literature ?? null) as { novelty?: string; references?: unknown[] } | null;
+    if (!raw) return null;
+    const noveltyMap: Record<string, LiteratureData["novelty"]> = {
+      not_found: "novel",
+      similar: "similar",
+      exact_match: "match",
+      novel: "novel",
+      match: "match",
+    };
+    return {
+      novelty: noveltyMap[raw.novelty || "similar"] || "similar",
+      references: Array.isArray(raw.references) ? raw.references : [],
+    } as LiteratureData;
+  }, [sim.planData.literature]);
 
   const trust: TrustLevel = useMemo(() => {
-    if (statusOf("recombiner") !== "done") return "pending";
-    const unresolved = MOCK_CONFLICTS.filter((c) => !c.resolved).length;
-    if (unresolved === 0) return "high";
-    if (unresolved <= 1) return "medium";
-    return "low";
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sim.threads]);
+    if (sim.planData.trustLevel === "high" || sim.planData.trustLevel === "amber" || sim.planData.trustLevel === "low") {
+      return sim.planData.trustLevel;
+    }
+    const unresolved = conflictsData.filter((c) => !c.resolved).length;
+    return unresolved === 0 ? "high" : unresolved <= 2 ? "amber" : "low";
+  }, [sim.planData.trustLevel, conflictsData]);
 
-  const warnings = useMemo(
-    () => (statusOf("recombiner") === "done" ? MOCK_CONFLICTS.filter((c) => !c.resolved).map((c) => c.text) : []),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sim.threads],
-  );
+  const warnings = useMemo(() => (statusOf(6) === "done" ? conflictsData : []), [sim.threads, conflictsData]);
+
+  const retry = async (threadId: number) => {
+    const hypothesisValue = hypothesis || localStorage.getItem("whitecoat_hypothesis") || "";
+    if (!hypothesisValue) return;
+    await sim.retryThread(threadId, hypothesisValue);
+  };
 
   return (
     <div className="min-h-screen bg-[#F8F8F7]">
@@ -75,37 +93,41 @@ function PlanPage() {
             <ThreadPanel
               threads={sim.threads}
               elapsedSeconds={sim.elapsedSeconds}
-              completeCount={sim.completeCount}
               trust={trust}
               warnings={warnings}
+              allComplete={sim.allComplete}
             />
           </div>
 
           <div className="flex-1 flex flex-col gap-4 min-w-0">
             <HypothesisCard hypothesis={hypothesis} />
-            <ParsedStructureCard parsed={sim.parsedReady ? MOCK_PARSED : null} />
+            <ParsedStructureCard parsed={parsedData} />
 
-            {statusOf("literature") !== "pending" && (
-              <LiteratureCard data={MOCK_LITERATURE} status={statusOf("literature") === "done" ? "done" : "running"} />
-            )}
-            {statusOf("protocol") !== "pending" && (
-              <ProtocolCard steps={MOCK_STEPS} status={statusOf("protocol") === "done" ? "done" : "running"} />
-            )}
-            {statusOf("materials") !== "pending" && (
-              <MaterialsCard materials={MOCK_MATERIALS} status={statusOf("materials") === "done" ? "done" : "running"} />
-            )}
-            {statusOf("budget") !== "pending" && (
-              <BudgetCard data={MOCK_BUDGET} status={statusOf("budget") === "done" ? "done" : "running"} />
-            )}
-            {statusOf("timeline") !== "pending" && (
-              <TimelineCard data={MOCK_TIMELINE} status={statusOf("timeline") === "done" ? "done" : "running"} />
-            )}
-            {statusOf("validation") !== "pending" && (
-              <ValidationCard data={MOCK_VALIDATION} status={statusOf("validation") === "done" ? "done" : "running"} />
-            )}
-            {statusOf("recombiner") !== "pending" && (
-              <RecombinerCard conflicts={MOCK_CONFLICTS} status={statusOf("recombiner") === "done" ? "done" : "running"} />
-            )}
+            {statusOf(0) === "running" && <LoadingCard title="Literature review" color="#7C3AED" />}
+            {statusOf(0) === "done" && literatureData && <LiteratureCard data={literatureData} status="done" />}
+            {statusOf(0) === "error" && <ErrorCard onRetry={() => retry(0)} />}
+
+            {statusOf(1) === "running" && <LoadingCard title="Step-by-step protocol" color="#2563EB" />}
+            {statusOf(1) === "done" && <ProtocolCard steps={protocolData} status="done" />}
+            {statusOf(1) === "error" && <ErrorCard onRetry={() => retry(1)} />}
+
+            {statusOf(2) === "running" && <LoadingCard title="Materials & reagents" color="#D97706" />}
+            {statusOf(2) === "done" && <MaterialsCard materials={materialsData} status="done" />}
+            {statusOf(2) === "error" && <ErrorCard onRetry={() => retry(2)} />}
+
+            {statusOf(3) === "running" && <LoadingCard title="Budget estimate" color="#16A34A" />}
+            {statusOf(3) === "done" && budgetData && <BudgetCard data={budgetData} status="done" />}
+            {statusOf(3) === "error" && <ErrorCard onRetry={() => retry(3)} />}
+
+            {statusOf(4) === "running" && <LoadingCard title="Experiment timeline" color="#DC2626" />}
+            {statusOf(4) === "done" && timelineData && <TimelineCard data={timelineData} status="done" />}
+            {statusOf(4) === "error" && <ErrorCard onRetry={() => retry(4)} />}
+
+            {statusOf(5) === "running" && <LoadingCard title="Validation approach" color="#0891B2" />}
+            {statusOf(5) === "done" && validationData && <ValidationCard data={validationData} status="done" />}
+            {statusOf(5) === "error" && <ErrorCard onRetry={() => retry(5)} />}
+
+            {sim.allComplete && <RecombinerCard conflicts={conflictsData} status={statusOf(6) === "done" ? "done" : "running"} />}
 
             {sim.allComplete && (
               <div className="flex items-center justify-between bg-[#FFFFFF] border border-[#E5E5E3] rounded-[10px] p-5">
@@ -130,5 +152,39 @@ function PlanPage() {
         </div>
       </main>
     </div>
+  );
+}
+
+function LoadingCard({ title, color }: { title: string; color: string }) {
+  return (
+    <section
+      className="bg-[#FFFFFF] border border-[#E5E5E3] rounded-[10px] p-5"
+      style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04)" }}
+    >
+      <div className="flex items-center gap-3 mb-4">
+        <span className="w-2 h-2 rounded-full" style={{ background: color }} />
+        <h3 className="text-[#0D0D0D] font-semibold" style={{ fontSize: 14 }}>
+          {title}
+        </h3>
+      </div>
+      <SkeletonBlock lines={4} />
+    </section>
+  );
+}
+
+function ErrorCard({ onRetry }: { onRetry: () => void }) {
+  return (
+    <section className="bg-[#FEE2E2] border-l-[3px] border-[#DC2626] rounded-[10px] p-4">
+      <div className="text-[#7F1D1D]" style={{ fontSize: 14 }}>
+        This section failed to load.
+      </div>
+      <button
+        onClick={onRetry}
+        className="mt-3 border border-[#E5E5E3] bg-white text-[#0D0D0D] rounded-md"
+        style={{ fontSize: 12, padding: "6px 10px" }}
+      >
+        Retry
+      </button>
+    </section>
   );
 }
