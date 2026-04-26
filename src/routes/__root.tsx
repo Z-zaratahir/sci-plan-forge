@@ -29,16 +29,22 @@ export const Route = createRootRoute({
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Lovable App" },
-      { name: "description", content: "Lovable Generated Project" },
-      { name: "author", content: "Lovable" },
-      { property: "og:title", content: "Lovable App" },
-      { property: "og:description", content: "Lovable Generated Project" },
+      { title: "WhiteCoat — From hypothesis to runnable experiment" },
+      { name: "description", content: "WhiteCoat reads your scientific hypothesis and generates a complete experiment plan — protocol, materials, budget, and timeline — in under 30 seconds." },
+      { name: "author", content: "WhiteCoat" },
+      { property: "og:title", content: "WhiteCoat — From hypothesis to runnable experiment" },
+      { property: "og:description", content: "AI-powered scientific experiment planning across 6 parallel threads." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
       { name: "twitter:site", content: "@Lovable" },
     ],
     links: [
+      { rel: "preconnect", href: "https://fonts.googleapis.com" },
+      { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
+      {
+        rel: "stylesheet",
+        href: "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap",
+      },
       {
         rel: "stylesheet",
         href: appCss,
