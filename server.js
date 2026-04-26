@@ -32,32 +32,24 @@ function sendJSON(res, statusCode, payload) {
 function sanitizeHypothesis(input) {
   if (!input || typeof input !== "string") return null;
   const trimmed = input.trim();
-  if (trimmed.length < 20) return null;
+  if (trimmed.length < 5) return null;
   if (trimmed.length > 2000) return trimmed.slice(0, 2000);
   return trimmed;
 }
 
 function safeParseJSON(str) {
-  if (!str || typeof str !== "string") return null;
-  let cleaned = str.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-  try {
-    return JSON.parse(cleaned);
-  } catch (e) {}
-
-  const objectMatch = cleaned.match(/\{[\s\S]*\}/);
-  if (objectMatch) {
-    try {
-      return JSON.parse(objectMatch[0]);
-    } catch (e) {}
-  }
-
-  const arrayMatch = cleaned.match(/\[[\s\S]*\]/);
-  if (arrayMatch) {
-    try {
-      return JSON.parse(arrayMatch[0]);
-    } catch (e) {}
-  }
-
+  if (!str) return null;
+  // Strip markdown code fences - this is the main issue
+  let cleaned = str
+    .replace(/```json\n?/gi, '')
+    .replace(/```\n?/gi, '')
+    .trim();
+  try { return JSON.parse(cleaned); } catch(e) {}
+  const objMatch = cleaned.match(/\{[\s\S]*\}/);
+  if (objMatch) { try { return JSON.parse(objMatch[0]); } catch(e) {} }
+  const arrMatch = cleaned.match(/\[[\s\S]*\]/);
+  if (arrMatch) { try { return JSON.parse(arrMatch[0]); } catch(e) {} }
+  console.log('=== PARSE FAILED, cleaned string was ===', cleaned.slice(0,200));
   return null;
 }
 
@@ -305,6 +297,12 @@ const server = http.createServer(async (req, res) => {
         },
       ]);
       console.log("=== RAW GROQ RESPONSE ===", groqText?.slice(0, 500));
+
+      if (!groqText) {
+        statusCode = 429;
+        sendJSON(res, 429, { error: "AI rate limit reached or service unavailable. Please try again in a minute." });
+        return;
+      }
 
       let parsed = safeParseJSON(groqText || "");
       if (!parsed || typeof parsed !== "object") {
